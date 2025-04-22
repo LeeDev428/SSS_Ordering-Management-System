@@ -1,0 +1,44 @@
+/* ordering-system/assets/css/style.css */
+body {
+    font-family: Arial, sans-serif;
+    background: linear-gradient(120deg, #f6d365, #fda085);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+  }
+  
+  .landing-container {
+    text-align: center;
+    background: white;
+    padding: 50px;
+    border-radius: 10px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.1);
+  }
+  
+  .landing-container h1 {
+    font-size: 2.5rem;
+    margin-bottom: 10px;
+  }
+  
+  .landing-container p {
+    font-size: 1.2rem;
+    margin-bottom: 30px;
+  }
+  
+  .buttons .btn {
+    display: inline-block;
+    margin: 0 10px;
+    padding: 10px 20px;
+    background: #ff7e5f;
+    color: white;
+    text-decoration: none;
+    border-radius: 5px;
+    transition: 0.3s ease;
+  }
+  
+  .buttons .btn:hover {
+    background: #eb5757;
+  }
+  
