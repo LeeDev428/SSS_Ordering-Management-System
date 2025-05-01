@@ -4,6 +4,36 @@ include '../middleware.php'; // Include the middleware
 adminOnly(); // Restrict access to admin-only users
 include '../database/db_connection.php'; // Include the database connection
 
+// Ensure uploads directory exists
+$upload_dir = '../uploads/';
+if (!is_dir($upload_dir)) {
+    mkdir($upload_dir, 0755, true);
+    // Create an index.html file to prevent directory listing
+    file_put_contents($upload_dir . 'index.html', 'Access Denied');
+}
+
+// Deduct product quantity for accepted orders
+$query = "SELECT sales.product_id, sales.quantity 
+          FROM sales 
+          WHERE sales.status = 'accepted' AND sales.is_processed = 0";
+$result = $conn->query($query);
+
+while ($row = $result->fetch_assoc()) {
+    $productId = $row['product_id'];
+    $orderedQuantity = $row['quantity'];
+
+    // Deduct the quantity from the products table
+    $updateQuery = "UPDATE products SET quantity = quantity - ? WHERE id = ? AND quantity >= ?";
+    $updateStmt = $conn->prepare($updateQuery);
+    $updateStmt->bind_param("iii", $orderedQuantity, $productId, $orderedQuantity);
+    $updateStmt->execute();
+    $updateStmt->close();
+}
+
+// Mark the processed orders as completed
+$markProcessedQuery = "UPDATE sales SET is_processed = 1 WHERE status = 'accepted' AND is_processed = 0";
+$conn->query($markProcessedQuery);
+
 // Handle form submission for adding or editing an item
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
@@ -11,33 +41,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $name = htmlspecialchars($_POST['name'], ENT_QUOTES, 'UTF-8');
         $price = floatval($_POST['price']);
         $quantity = intval($_POST['quantity']);
-        $category = htmlspecialchars($_POST['category'], ENT_QUOTES, 'UTF-8');
-
+        $description = htmlspecialchars($_POST['description'] ?? '', ENT_QUOTES, 'UTF-8');
+        
+        // Set supplier_id to null (removed from form)
+        $supplier_id = null;
+        
         // Handle image upload
-        $imagePath = 'public/img/items/default.png'; // Default image path
-        if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
-            $uploadDir = '../public/img/items/';
-            $imageName = basename($_FILES['image']['name']);
-            $targetFile = $uploadDir . $imageName;
-
-            // Ensure the directory exists
-            if (!is_dir($uploadDir)) {
-                mkdir($uploadDir, 0777, true); // Create the directory with appropriate permissions
+        $image_path = null;
+        if(isset($_FILES['image']) && $_FILES['image']['error'] == 0) {
+            $upload_dir = '../uploads/';
+            
+            // Create directory if it doesn't exist
+            if(!is_dir($upload_dir)) {
+                mkdir($upload_dir, 0755, true);
             }
-
-            // Move the uploaded file to the target directory
-            if (move_uploaded_file($_FILES['image']['tmp_name'], $targetFile)) {
-                $imagePath = 'public/img/items/' . $imageName;
+            
+            $file_name = time() . '_' . basename($_FILES['image']['name']);
+            $target_file = $upload_dir . $file_name;
+            
+            $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+            if(in_array($_FILES['image']['type'], $allowed_types) && move_uploaded_file($_FILES['image']['tmp_name'], $target_file)) {
+                $image_path = 'uploads/' . $file_name; // Save relative path
             }
         }
-
-        $stmt = $conn->prepare("INSERT INTO items (name, price, quantity, category, image) VALUES (?, ?, ?, ?, ?)");
-        $stmt->bind_param("sdiss", $name, $price, $quantity, $category, $imagePath);
+        
+        // Modified to include image field
+        $stmt = $conn->prepare("INSERT INTO products (name, price, quantity, description, supplier_id, image_path) VALUES (?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("sdisss", $name, $price, $quantity, $description, $supplier_id, $image_path);
         $stmt->execute();
         $stmt->close();
     } elseif ($action === 'delete' && isset($_POST['id'])) {
         $id = intval($_POST['id']);
-        $stmt = $conn->prepare("DELETE FROM items WHERE id = ?");
+        // Changed from items to products
+        $stmt = $conn->prepare("DELETE FROM products WHERE id = ?");
         $stmt->bind_param("i", $id);
         $stmt->execute();
         $stmt->close();
@@ -46,28 +82,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $name = htmlspecialchars($_POST['name'], ENT_QUOTES, 'UTF-8');
         $price = floatval($_POST['price']);
         $quantity = intval($_POST['quantity']);
-        $category = htmlspecialchars($_POST['category'], ENT_QUOTES, 'UTF-8');
-
+        $description = htmlspecialchars($_POST['description'] ?? '', ENT_QUOTES, 'UTF-8');
+        
+        // Set supplier_id to null (removed from form)
+        $supplier_id = null;
+        
         // Handle image upload for edit
-        $imagePath = htmlspecialchars($_POST['existing_image'], ENT_QUOTES, 'UTF-8'); // Use existing image by default
-        if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
-            $uploadDir = '../public/img/items/';
-            $imageName = basename($_FILES['image']['name']);
-            $targetFile = $uploadDir . $imageName;
-
-            // Ensure the directory exists
-            if (!is_dir($uploadDir)) {
-                mkdir($uploadDir, 0777, true); // Create the directory with appropriate permissions
+        $image_path = null;
+        if(isset($_FILES['image']) && $_FILES['image']['error'] == 0) {
+            $upload_dir = '../uploads/';
+            
+            // Create directory if it doesn't exist
+            if(!is_dir($upload_dir)) {
+                mkdir($upload_dir, 0755, true);
             }
-
-            // Move the uploaded file to the target directory
-            if (move_uploaded_file($_FILES['image']['tmp_name'], $targetFile)) {
-                $imagePath = 'public/img/items/' . $imageName;
+            
+            $file_name = time() . '_' . basename($_FILES['image']['name']);
+            $target_file = $upload_dir . $file_name;
+            
+            $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+            if(in_array($_FILES['image']['type'], $allowed_types) && move_uploaded_file($_FILES['image']['tmp_name'], $target_file)) {
+                $image_path = 'uploads/' . $file_name; // Save relative path
+                
+                // Update with new image
+                $stmt = $conn->prepare("UPDATE products SET name = ?, price = ?, quantity = ?, description = ?, supplier_id = ?, image_path = ? WHERE id = ?");
+                $stmt->bind_param("sdisssi", $name, $price, $quantity, $description, $supplier_id, $image_path, $id);
             }
+        } else {
+            // Update without changing image
+            $stmt = $conn->prepare("UPDATE products SET name = ?, price = ?, quantity = ?, description = ?, supplier_id = ? WHERE id = ?");
+            $stmt->bind_param("sdisii", $name, $price, $quantity, $description, $supplier_id, $id);
         }
-
-        $stmt = $conn->prepare("UPDATE items SET name = ?, price = ?, quantity = ?, category = ?, image = ? WHERE id = ?");
-        $stmt->bind_param("sdissi", $name, $price, $quantity, $category, $imagePath, $id);
+        
         $stmt->execute();
         $stmt->close();
     }
@@ -79,25 +125,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $name = !empty($_POST['name']) ? htmlspecialchars($_POST['name'], ENT_QUOTES, 'UTF-8') : null;
     $price = !empty($_POST['price']) ? floatval($_POST['price']) : null;
     $quantity = !empty($_POST['quantity']) ? intval($_POST['quantity']) : null;
-    $category = !empty($_POST['category']) ? htmlspecialchars($_POST['category'], ENT_QUOTES, 'UTF-8') : null;
-    $imagePath = htmlspecialchars($_POST['existing_image'], ENT_QUOTES, 'UTF-8'); // Use existing image by default
-
-    // Handle image upload for update
-    if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
-        $uploadDir = '../public/img/items/';
-        $imageName = basename($_FILES['image']['name']);
-        $targetFile = $uploadDir . $imageName;
-
-        // Ensure the directory exists
-        if (!is_dir($uploadDir)) {
-            mkdir($uploadDir, 0777, true); // Create the directory with appropriate permissions
-        }
-
-        // Move the uploaded file to the target directory
-        if (move_uploaded_file($_FILES['image']['tmp_name'], $targetFile)) {
-            $imagePath = 'public/img/items/' . $imageName;
-        }
-    }
+    $description = !empty($_POST['description']) ? htmlspecialchars($_POST['description'], ENT_QUOTES, 'UTF-8') : null;
+    
+    // Set supplier_id to null (removed from form)
+    $supplier_id = null;
 
     // Build the SQL query dynamically to update only modified fields
     $fields = [];
@@ -119,21 +150,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $params[] = $quantity;
         $types .= 'i';
     }
-    if ($category !== null) {
-        $fields[] = 'category = ?';
-        $params[] = $category;
+    if ($description !== null) {
+        $fields[] = 'description = ?';
+        $params[] = $description;
         $types .= 's';
     }
-    if ($imagePath !== null) {
-        $fields[] = 'image = ?';
-        $params[] = $imagePath;
-        $types .= 's';
+    if ($supplier_id !== null) {
+        $fields[] = 'supplier_id = ?';
+        $params[] = $supplier_id;
+        $types .= 'i';
     }
 
     $params[] = $id;
     $types .= 'i';
 
-    $query = "UPDATE items SET " . implode(', ', $fields) . " WHERE id = ?";
+    // Changed from items to products
+    $query = "UPDATE products SET " . implode(', ', $fields) . " WHERE id = ?";
     $stmt = $conn->prepare($query);
     $stmt->bind_param($types, ...$params);
     $stmt->execute();
@@ -148,8 +180,8 @@ $itemsPerPage = 10;
 $page = isset($_GET['page']) ? intval($_GET['page']) : 1;
 $offset = ($page - 1) * $itemsPerPage;
 
-// Fetch filtered and paginated items from the database
-$query = "SELECT * FROM items WHERE name LIKE ? LIMIT ?, ?";
+// Changed from items to products
+$query = "SELECT * FROM products WHERE name LIKE ? LIMIT ?, ?";
 $stmt = $conn->prepare($query);
 $searchTerm = "%$searchQuery%";
 $stmt->bind_param("sii", $searchTerm, $offset, $itemsPerPage);
@@ -158,7 +190,7 @@ $result = $stmt->get_result();
 $items = $result->fetch_all(MYSQLI_ASSOC);
 
 // Get total count for pagination
-$countQuery = "SELECT COUNT(*) as total FROM items WHERE name LIKE ?";
+$countQuery = "SELECT COUNT(*) as total FROM products WHERE name LIKE ?";
 $countStmt = $conn->prepare($countQuery);
 $countStmt->bind_param("s", $searchTerm);
 $countStmt->execute();
@@ -204,9 +236,7 @@ $conn->close();
             document.getElementById('updateName').value = item.name;
             document.getElementById('updatePrice').value = item.price;
             document.getElementById('updateQuantity').value = item.quantity;
-            document.getElementById('updateCategory').value = item.category;
-            document.getElementById('updateImagePreview').src = '../' + item.image;
-            document.getElementById('existingImage').value = item.image;
+            document.getElementById('updateDescription').value = item.description || '';
         }
 
         // Close the update modal
@@ -263,18 +293,7 @@ $conn->close();
 </head>
 <body class="bg-gradient-to-br from-green-100 via-yellow-100 to-white min-h-screen flex overflow-x-auto">
     <!-- Sidebar -->
-    <aside id="sidebar" class="bg-green-600 text-white w-64 min-h-screen fixed transform -translate-x-full lg:translate-x-0 transition-transform duration-300 border-r border-green-800">
-        <div class="p-6 flex justify-between items-center">
-            <h2 class="text-2xl font-bold sidebar-text">Admin Panel</h2>
-            <button onclick="minimizeSidebar()" class="text-white hover:text-gray-300">
-                <i data-lucide="chevron-left"></i>
-            </button>
-        </div>
-        <nav class="mt-6">
-            <a href="admin_dashboard.php" class="block px-6 py-3 hover:bg-green-700 transition sidebar-text">Dashboard</a>
-            <a href="add_item.php" class="block px-6 py-3 hover:bg-green-700 transition sidebar-text">Add Item</a>
-        </nav>
-    </aside>
+    <?php include 'admin_panel.php'; ?>
 
     <!-- Main Content -->
     <div id="mainContent" class="flex-1 lg:ml-64 transition-all duration-300">
@@ -294,9 +313,9 @@ $conn->close();
         </header>
 
         <main class="container mx-auto mt-12">
-            <h2 class="text-3xl font-bold text-green-700 mb-6 text-center">Manage Items</h2>
+            <h2 class="text-3xl font-bold text-green-700 mb-6 text-center">Add Items</h2>
 
-            <!-- Add Item Form -->
+            <!-- Add Item Form - Removed supplier_id field -->
             <form method="post" enctype="multipart/form-data" class="bg-white p-6 rounded-lg shadow-lg mb-8">
                 <input type="hidden" name="action" value="create">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -313,18 +332,18 @@ $conn->close();
                         <input type="number" name="quantity" required class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400">
                     </div>
                     <div>
-                        <label class="block text-gray-700 mb-2">Category</label>
-                        <input type="text" name="category" required class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400">
+                        <label class="block text-gray-700 mb-2">Description</label>
+                        <textarea name="description" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"></textarea>
                     </div>
                     <div>
-                        <label class="block text-gray-700 mb-2">Image</label>
-                        <input type="file" name="image" onchange="previewImage(this, 'imagePreview')" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400">
-                        <img id="imagePreview" src="public/img/items/default.png" alt="Image Preview" class="mt-4 h-24 w-24 rounded-lg shadow-lg">
+                        <label class="block text-gray-700 mb-2">Product Image</label>
+                        <input type="file" name="image" accept="image/*" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400">
                     </div>
                 </div>
                 <button type="submit" class="mt-4 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">Add Item</button>
             </form>
-
+            <br>
+            <h2 class="text-3xl font-bold text-green-700 mb-6 text-center">Items</h2>
             <!-- Search Bar -->
             <form method="get" class="mb-6">
                 <input type="text" name="search" value="<?php echo $searchQuery; ?>" placeholder="Search by name..." class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400">
@@ -332,14 +351,13 @@ $conn->close();
                &nbsp;  &nbsp;  &nbsp; <button type="submit" class="mt-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">Search</button>
             </form>
 
-            <!-- Update Modal -->
+            <!-- Update Modal - Removed supplier_id field -->
             <div id="updateModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
                 <div class="bg-white p-6 rounded-lg shadow-lg w-3/4 max-h-[80vh] overflow-y-auto">
                     <h3 class="text-2xl font-bold text-green-700 mb-4">Update Item</h3>
                     <form method="post" enctype="multipart/form-data">
                         <input type="hidden" name="action" value="update">
                         <input type="hidden" name="id" id="updateItemId">
-                        <input type="hidden" name="existing_image" id="existingImage">
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-gray-700 mb-2">Name</label>
@@ -354,13 +372,12 @@ $conn->close();
                                 <input type="number" name="quantity" id="updateQuantity" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400">
                             </div>
                             <div>
-                                <label class="block text-gray-700 mb-2">Category</label>
-                                <input type="text" name="category" id="updateCategory" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400">
+                                <label class="block text-gray-700 mb-2">Description</label>
+                                <textarea name="description" id="updateDescription" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"></textarea>
                             </div>
                             <div>
-                                <label class="block text-gray-700 mb-2">Image</label>
-                                <input type="file" name="image" onchange="previewImage(this, 'updateImagePreview')" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400">
-                                <img id="updateImagePreview" src="public/img/items/default.png" alt="Image Preview" class="mt-4 h-24 w-24 rounded-lg shadow-lg">
+                                <label class="block text-gray-700 mb-2">Product Image</label>
+                                <input type="file" name="image" accept="image/*" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400">
                             </div>
                         </div>
                         <div class="flex justify-end space-x-4 mt-4">
@@ -371,16 +388,15 @@ $conn->close();
                 </div>
             </div>
 
+            
             <!-- Items Table -->
             <table class="w-full bg-white rounded-lg shadow-lg">
                 <thead>
                     <tr class="bg-green-600 text-white">
                         <th class="px-4 py-2">ID</th>
-                        <th class="px-4 py-2">Image</th>
                         <th class="px-4 py-2">Name</th>
                         <th class="px-4 py-2">Price</th>
                         <th class="px-4 py-2">Quantity</th>
-                        <th class="px-4 py-2">Category</th>
                         <th class="px-4 py-2">
                             <?php echo isset($item['updated_at']) && $item['updated_at'] !== $item['created_at'] ? 'Updated At' : 'Created At'; ?>
                         </th>
@@ -392,15 +408,9 @@ $conn->close();
                     <?php foreach ($items as $item): ?>
                         <tr class="border-b text-center">
                             <td class="px-4 py-2"><?php echo $item['id']; ?></td>
-                            <td class="px-4 py-2">
-                                <a href="../<?php echo htmlspecialchars($item['image'], ENT_QUOTES, 'UTF-8'); ?>" target="_blank">
-                                    <img src="../<?php echo htmlspecialchars($item['image'], ENT_QUOTES, 'UTF-8'); ?>" alt="Item Image" class="h-12 w-12 rounded-lg hover:scale-150 transition-transform duration-200">
-                                </a>
-                            </td>
                             <td class="px-4 py-2"><?php echo htmlspecialchars($item['name'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td class="px-4 py-2">₱<?php echo number_format($item['price'], 2); ?></td>
                             <td class="px-4 py-2"><?php echo $item['quantity']; ?></td>
-                            <td class="px-4 py-2"><?php echo htmlspecialchars($item['category'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td class="px-4 py-2">
                                 <?php echo isset($item['updated_at']) && $item['updated_at'] !== $item['created_at'] 
                                     ? htmlspecialchars($item['updated_at'], ENT_QUOTES, 'UTF-8') 

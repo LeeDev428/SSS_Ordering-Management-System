@@ -1,0 +1,9 @@
+Using Laragon:
+Open Laragon
+Click on "Database" or "MySQL" in the toolbar
+Click on "HeidiSQL" or your configured database client
+Connect to your MySQL server
+Right-click in the left panel and select "Create new" > "Database"
+Name it "orderease_db" and click "OK"
+Right-click on the new database and select "Create new" > "Query"
+Paste the SQL code for creating tables and execute it
